@@ -3,6 +3,8 @@ import aiosqlite
 from app.db.sqlite import get_db
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import user_rate_limit
+from app.services.data_utils import DAILY_COLS, rows_to_daily
+from app.services.cache import response_cache
 from app.config import settings
 
 router = APIRouter(
@@ -27,38 +29,20 @@ NORM_FIELDS = (
 NORM_KEYS = ("T2M", "T2M_MAX", "T2M_MIN", "PREC", "WS2M", "RH2M", "SOLAR",
              "EVAP", "PRES", "SPHU", "SNOW", "WMAX", "WDIR")
 
-DAILY_COLS = (
-    "date, temp_mean_c, temp_max_c, temp_min_c, precipitation_mm, "
-    "windspeed_mean_2m_ms, relative_humidity_pct, solar_radiation_kwh_m2, "
-    "evapotranspiration_mm, surface_pressure_kpa, specific_humidity_g_kg, "
-    "snow_depth_cm, windspeed_max_2m_ms, wind_direction_deg"
-)
-
-DAILY_KEYS    = ("T2M", "T2M_MAX", "T2M_MIN", "PREC", "WS2M", "RH2M", "SOLAR",
-                 "EVAP", "PRES", "SPHU", "SNOW", "WMAX", "WDIR")
-DAILY_DB_COLS = ("temp_mean_c", "temp_max_c", "temp_min_c", "precipitation_mm",
-                 "windspeed_mean_2m_ms", "relative_humidity_pct", "solar_radiation_kwh_m2",
-                 "evapotranspiration_mm", "surface_pressure_kpa", "specific_humidity_g_kg",
-                 "snow_depth_cm", "windspeed_max_2m_ms", "wind_direction_deg")
-
-
-def _rows_to_daily(rows: list) -> dict:
-    data: dict = {"dates": [], **{k: [] for k in DAILY_KEYS}}
-    for r in rows:
-        data["dates"].append(str(r["date"]))
-        for key, col in zip(DAILY_KEYS, DAILY_DB_COLS):
-            data[key].append(r[col])
-    return data
-
 
 @router.get("/list")
 async def tehsils(db: aiosqlite.Connection = Depends(get_db)):
+    cached = response_cache.get("tehsils")
+    if cached is not None:
+        return cached
     async with db.execute(
         "SELECT DISTINCT tehsil, district, province, latitude, longitude "
         "FROM tehsil_monthly_stats ORDER BY tehsil"
     ) as cur:
         rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    response_cache.set("tehsils", result)
+    return result
 
 
 @router.get("/summary")
@@ -154,7 +138,7 @@ async def tehsil_climate(
         ) as cur:
             rows = await cur.fetchall()
 
-    return {"data": _rows_to_daily(rows)}
+    return {"data": rows_to_daily(rows)}
 
 
 @router.get("/stats")

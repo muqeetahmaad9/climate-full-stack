@@ -3,6 +3,8 @@ import aiosqlite
 from app.db.sqlite import get_db, nearest_grid
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import user_rate_limit
+from app.services.data_utils import DAILY_COLS, rows_to_daily
+from app.services.cache import response_cache
 from app.config import settings
 
 router = APIRouter(
@@ -16,44 +18,25 @@ router = APIRouter(
 PAK_LAT = (23.5, 37.5)
 PAK_LON = (60.5, 78.5)
 
-DAILY_COLS = (
-    "date, temp_mean_c, temp_max_c, temp_min_c, precipitation_mm, "
-    "windspeed_mean_2m_ms, relative_humidity_pct, solar_radiation_kwh_m2, "
-    "evapotranspiration_mm, surface_pressure_kpa, specific_humidity_g_kg, "
-    "snow_depth_cm, windspeed_max_2m_ms, wind_direction_deg"
-)
-
-DAILY_KEYS = ("T2M", "T2M_MAX", "T2M_MIN", "PREC", "WS2M", "RH2M",
-              "SOLAR", "EVAP", "PRES", "SPHU", "SNOW", "WMAX", "WDIR")
-
-DAILY_DB_COLS = ("temp_mean_c", "temp_max_c", "temp_min_c", "precipitation_mm",
-                 "windspeed_mean_2m_ms", "relative_humidity_pct", "solar_radiation_kwh_m2",
-                 "evapotranspiration_mm", "surface_pressure_kpa", "specific_humidity_g_kg",
-                 "snow_depth_cm", "windspeed_max_2m_ms", "wind_direction_deg")
-
 
 def _check_coords(lat: float, lon: float) -> None:
     if not (PAK_LAT[0] <= lat <= PAK_LAT[1] and PAK_LON[0] <= lon <= PAK_LON[1]):
         raise HTTPException(400, "Coordinates outside Pakistan bounds")
 
 
-def _rows_to_daily(rows: list) -> dict:
-    data: dict = {"dates": [], **{k: [] for k in DAILY_KEYS}}
-    for r in rows:
-        data["dates"].append(str(r["date"]))
-        for key, col in zip(DAILY_KEYS, DAILY_DB_COLS):
-            data[key].append(r[col])
-    return data
-
-
 @router.get("/districts")
 async def districts(db: aiosqlite.Connection = Depends(get_db)):
+    cached = response_cache.get("districts")
+    if cached is not None:
+        return cached
     async with db.execute(
         "SELECT DISTINCT district, province, latitude, longitude "
         "FROM monthly_stats ORDER BY district"
     ) as cur:
         rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    response_cache.set("districts", result)
+    return result
 
 
 @router.get("/summary")
@@ -145,7 +128,7 @@ async def climate(
             (*bounds, from_int, to_int),
         ) as cur:
             rows = await cur.fetchall()
-        return {"data": _rows_to_daily(rows)}
+        return {"data": rows_to_daily(rows)}
 
     async with db.execute("""
         SELECT month, T2M_norm, T2M_MAX_norm, T2M_MIN_norm,
