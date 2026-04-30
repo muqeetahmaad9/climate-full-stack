@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, Query
 import aiosqlite
 from app.db.sqlite import get_db
+from app.middleware.auth import get_current_user
 
-router = APIRouter(tags=["tehsil"])
+router = APIRouter(tags=["tehsil"], dependencies=[Depends(get_current_user)])
 
 YEARLY_FIELDS = (
     "T2M", "T2M_MAX", "T2M_MIN", "T2M_MAX_PEAK", "T2M_MIN_PEAK",

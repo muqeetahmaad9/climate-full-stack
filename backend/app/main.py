@@ -4,13 +4,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from app.db.sqlite import init_grid_cache
-from app.routes import weather, tehsil, ai_proxy
+from app.db.mongo import connect_mongo, close_mongo
+from app.routes import weather, tehsil, ai_proxy, auth
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await connect_mongo()
     await init_grid_cache()
     yield
+    await close_mongo()
 
 
 app = FastAPI(
@@ -27,6 +30,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
+app.include_router(auth.router,      prefix="/api/auth")
 app.include_router(weather.router,   prefix="/api/weather")
 app.include_router(tehsil.router,    prefix="/api/tehsil")
 app.include_router(ai_proxy.router,  prefix="/api/ai")

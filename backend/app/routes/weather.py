@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 import aiosqlite
 from app.db.sqlite import get_db, nearest_grid
+from app.middleware.auth import get_current_user
 
-router = APIRouter(tags=["weather"])
+router = APIRouter(tags=["weather"], dependencies=[Depends(get_current_user)])
 
 PAK_LAT = (23.5, 37.5)
 PAK_LON = (60.5, 78.5)
