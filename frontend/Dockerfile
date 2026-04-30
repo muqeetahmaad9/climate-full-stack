@@ -7,6 +7,9 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# Mapbox token baked in at build time (public token, safe to embed)
+ARG NEXT_PUBLIC_MAPBOX_TOKEN
+ENV NEXT_PUBLIC_MAPBOX_TOKEN=$NEXT_PUBLIC_MAPBOX_TOKEN
 RUN npm run build
 
 FROM node:20-alpine AS runner

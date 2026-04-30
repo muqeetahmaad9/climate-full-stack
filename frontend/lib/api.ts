@@ -1,6 +1,8 @@
 import type { AuthTokens, SummaryResponse, ClimateResponse, District } from './types'
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+// Empty BASE → relative URLs → Next.js rewrite proxy forwards to backend
+// Works identically in dev (localhost:3000→:8000) and Docker (frontend→backend)
+const BASE = ''
 
 function getToken(): string | null {
   if (typeof window === 'undefined') return null

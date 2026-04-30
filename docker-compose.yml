@@ -1,0 +1,69 @@
+services:
+
+  # ── MongoDB ────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - pakclim
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── FastAPI backend ────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI:       mongodb://mongo:27017/pakclim
+      SQLITE_DB_PATH:  /data/weather_data.db
+    volumes:
+      - ./data:/data:ro          # mount SQLite DB (read-only)
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - pakclim
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+
+  # ── Next.js frontend ───────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_MAPBOX_TOKEN: ${NEXT_PUBLIC_MAPBOX_TOKEN}
+    restart: unless-stopped
+    environment:
+      NODE_ENV:    production
+      BACKEND_URL: http://backend:8000   # server-side proxy target
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - pakclim
+
+# ── Volumes & networks ─────────────────────────────────────────
+volumes:
+  mongo_data:
+
+networks:
+  pakclim:
+    driver: bridge
