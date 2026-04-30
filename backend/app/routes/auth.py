@@ -10,8 +10,13 @@ from app.services.auth_service import (
     create_access_token, create_refresh_token, decode_token,
 )
 from app.db.mongo import users_col, tokens_col
+from app.middleware.rate_limit import ip_rate_limit
+from app.config import settings
 
-router = APIRouter(tags=["auth"])
+router = APIRouter(
+    tags=["auth"],
+    dependencies=[Depends(ip_rate_limit(settings.rate_limit_auth))],
+)
 _bearer = HTTPBearer()
 
 

@@ -1,9 +1,18 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 from app.services.ai_service import rule_based_reply, call_claude
+from app.middleware.auth import get_current_user
+from app.middleware.rate_limit import user_rate_limit
+from app.config import settings
 import httpx
 
-router = APIRouter(tags=["ai"])
+router = APIRouter(
+    tags=["ai"],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(user_rate_limit(settings.rate_limit_live_api, "live")),
+    ],
+)
 
 _ai_key: str | None = None
 
