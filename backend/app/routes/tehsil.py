@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, Query
-import aiosqlite
-from app.db.sqlite import get_db
+
+from app.db.mongo import (
+    tehsil_monthly_stats_col, tehsil_yearly_stats_col,
+    tehsil_normals_col, weather_data_col,
+)
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import user_rate_limit
-from app.services.data_utils import DAILY_COLS, rows_to_daily
+from app.services.data_utils import rows_to_daily
 from app.services.cache import response_cache
 from app.config import settings
 
@@ -29,18 +32,31 @@ NORM_FIELDS = (
 NORM_KEYS = ("T2M", "T2M_MAX", "T2M_MIN", "PREC", "WS2M", "RH2M", "SOLAR",
              "EVAP", "PRES", "SPHU", "SNOW", "WMAX", "WDIR")
 
+_DAILY_PROJ = {"_id": 0}
+
 
 @router.get("/list")
-async def tehsils(db: aiosqlite.Connection = Depends(get_db)):
+async def tehsils():
     cached = response_cache.get("tehsils")
     if cached is not None:
         return cached
-    async with db.execute(
-        "SELECT DISTINCT tehsil, district, province, latitude, longitude "
-        "FROM tehsil_monthly_stats ORDER BY tehsil"
-    ) as cur:
-        rows = await cur.fetchall()
-    result = [dict(r) for r in rows]
+    pipeline = [
+        {"$group": {"_id": {
+            "tehsil":    "$tehsil",
+            "district":  "$district",
+            "province":  "$province",
+            "latitude":  "$latitude",
+            "longitude": "$longitude",
+        }}},
+        {"$project": {"_id": 0,
+                      "tehsil":    "$_id.tehsil",
+                      "district":  "$_id.district",
+                      "province":  "$_id.province",
+                      "latitude":  "$_id.latitude",
+                      "longitude": "$_id.longitude"}},
+        {"$sort": {"tehsil": 1}},
+    ]
+    result = await tehsil_monthly_stats_col().aggregate(pipeline).to_list(None)
     response_cache.set("tehsils", result)
     return result
 
@@ -50,57 +66,36 @@ async def tehsil_summary(
     lat: float | None = Query(default=None),
     lon: float | None = Query(default=None),
     tehsil: str = Query(default=""),
-    db: aiosqlite.Connection = Depends(get_db),
 ):
     tq = tehsil.strip()
-    yr_sel = ", ".join(["year"] + list(YEARLY_FIELDS))
-    nr_sel = "month, " + ", ".join(NORM_FIELDS)
+    proj_yr = {"_id": 0, "year": 1, "tehsil": 1, "district": 1, "province": 1,
+               **{f: 1 for f in YEARLY_FIELDS}}
+    proj_nr = {"_id": 0, "month": 1, **{f: 1 for f in NORM_FIELDS}}
 
     if tq:
-        async with db.execute(
-            f"SELECT {yr_sel} FROM tehsil_yearly_stats WHERE tehsil=? ORDER BY year", (tq,)
-        ) as cur:
-            yr = await cur.fetchall()
-        async with db.execute(
-            f"SELECT {nr_sel} FROM tehsil_normals WHERE tehsil=? ORDER BY month", (tq,)
-        ) as cur:
-            nr = await cur.fetchall()
-        async with db.execute(
-            "SELECT tehsil, district, province FROM tehsil_yearly_stats WHERE tehsil=? LIMIT 1", (tq,)
-        ) as cur:
-            info = await cur.fetchone()
+        yr = await tehsil_yearly_stats_col().find({"tehsil": tq}, proj_yr).sort("year", 1).to_list(None)
+        nr = await tehsil_normals_col().find({"tehsil": tq}, proj_nr).sort("month", 1).to_list(None)
     else:
-        bbox = (lat - 0.2, lat + 0.2, lon - 0.2, lon + 0.2)
-        async with db.execute(
-            f"SELECT {yr_sel} FROM tehsil_yearly_stats "
-            "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? ORDER BY year",
-            bbox,
-        ) as cur:
-            yr = await cur.fetchall()
-        async with db.execute(
-            f"SELECT {nr_sel} FROM tehsil_normals "
-            "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? ORDER BY month",
-            bbox,
-        ) as cur:
-            nr = await cur.fetchall()
-        async with db.execute(
-            "SELECT tehsil, district, province FROM tehsil_yearly_stats "
-            "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? LIMIT 1",
-            bbox,
-        ) as cur:
-            info = await cur.fetchone()
+        bbox = {
+            "latitude":  {"$gte": lat - 0.2, "$lte": lat + 0.2},
+            "longitude": {"$gte": lon - 0.2, "$lte": lon + 0.2},
+        }
+        yr = await tehsil_yearly_stats_col().find(bbox, proj_yr).sort("year", 1).to_list(None)
+        nr = await tehsil_normals_col().find(bbox, proj_nr).sort("month", 1).to_list(None)
 
-    yearly = {f: [r[f] for r in yr] for f in YEARLY_FIELDS}
+    info = yr[0] if yr else {}
+
+    yearly = {f: [r.get(f) for r in yr] for f in YEARLY_FIELDS}
     yearly["years"] = [r["year"] for r in yr]
 
     normals = {"months": [r["month"] for r in nr]}
     for key, col in zip(NORM_KEYS, NORM_FIELDS):
-        normals[key] = [r[col] for r in nr]
+        normals[key] = [r.get(col) for r in nr]
 
     return {
-        "tehsil":   info["tehsil"]   if info else "",
-        "district": info["district"] if info else "",
-        "province": info["province"] if info else "",
+        "tehsil":   info.get("tehsil", ""),
+        "district": info.get("district", ""),
+        "province": info.get("province", ""),
         "yearly":   yearly,
         "normals":  normals,
     }
@@ -113,7 +108,6 @@ async def tehsil_climate(
     tehsil: str = Query(default=""),
     from_date: str = Query(default="", alias="from"),
     to_date: str = Query(default="", alias="to"),
-    db: aiosqlite.Connection = Depends(get_db),
 ):
     tq = tehsil.strip()
     try:
@@ -123,20 +117,17 @@ async def tehsil_climate(
         fi, ti = 0, 99999999
 
     if tq:
-        async with db.execute(
-            f"SELECT {DAILY_COLS} FROM weather_data "
-            "WHERE tehsil=? AND date BETWEEN ? AND ? AND temp_mean_c > -999 ORDER BY date",
-            (tq, fi, ti),
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await weather_data_col().find(
+            {"tehsil": tq, "date": {"$gte": fi, "$lte": ti}, "temp_mean_c": {"$gt": -999}},
+            _DAILY_PROJ,
+        ).sort("date", 1).to_list(None)
     else:
-        async with db.execute(
-            f"SELECT {DAILY_COLS} FROM weather_data "
-            "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? "
-            "AND date BETWEEN ? AND ? AND temp_mean_c > -999 ORDER BY date",
-            (lat - 0.2, lat + 0.2, lon - 0.2, lon + 0.2, fi, ti),
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await weather_data_col().find(
+            {"latitude":  {"$gte": lat - 0.2, "$lte": lat + 0.2},
+             "longitude": {"$gte": lon - 0.2, "$lte": lon + 0.2},
+             "date": {"$gte": fi, "$lte": ti}, "temp_mean_c": {"$gt": -999}},
+            _DAILY_PROJ,
+        ).sort("date", 1).to_list(None)
 
     return {"data": rows_to_daily(rows)}
 
@@ -147,50 +138,35 @@ async def tehsil_stats(
     lon: float = Query(default=0.0),
     tehsil: str = Query(default=""),
     year: int | None = Query(default=None),
-    db: aiosqlite.Connection = Depends(get_db),
 ):
     tq = tehsil.strip()
+    flt: dict = {}
     if tq:
-        if year:
-            async with db.execute(
-                "SELECT * FROM tehsil_yearly_stats WHERE tehsil=? AND year=? ORDER BY year",
-                (tq, year),
-            ) as cur:
-                rows = await cur.fetchall()
-        else:
-            async with db.execute(
-                "SELECT * FROM tehsil_yearly_stats WHERE tehsil=? ORDER BY year", (tq,)
-            ) as cur:
-                rows = await cur.fetchall()
+        flt["tehsil"] = tq
     else:
-        bbox = (lat - 0.2, lat + 0.2, lon - 0.2, lon + 0.2)
-        if year:
-            async with db.execute(
-                "SELECT * FROM tehsil_yearly_stats "
-                "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? AND year=? ORDER BY year",
-                (*bbox, year),
-            ) as cur:
-                rows = await cur.fetchall()
-        else:
-            async with db.execute(
-                "SELECT * FROM tehsil_yearly_stats "
-                "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? ORDER BY year",
-                bbox,
-            ) as cur:
-                rows = await cur.fetchall()
-
-    return [dict(r) for r in rows]
+        flt["latitude"]  = {"$gte": lat - 0.2, "$lte": lat + 0.2}
+        flt["longitude"] = {"$gte": lon - 0.2, "$lte": lon + 0.2}
+    if year:
+        flt["year"] = year
+    rows = await tehsil_yearly_stats_col().find(flt, {"_id": 0}).sort("year", 1).to_list(None)
+    return rows
 
 
 @router.get("/search")
-async def tehsil_search(
-    q: str = Query(default=""),
-    db: aiosqlite.Connection = Depends(get_db),
-):
-    async with db.execute(
-        "SELECT tehsil, district, province, latitude, longitude "
-        "FROM tehsil_monthly_stats WHERE LOWER(tehsil) LIKE ? GROUP BY tehsil LIMIT 30",
-        (f"%{q.strip().lower()}%",),
-    ) as cur:
-        rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+async def tehsil_search(q: str = Query(default="")):
+    pipeline = [
+        {"$match": {"tehsil": {"$regex": q.strip(), "$options": "i"}}},
+        {"$group": {"_id": "$tehsil",
+                    "district":  {"$first": "$district"},
+                    "province":  {"$first": "$province"},
+                    "latitude":  {"$first": "$latitude"},
+                    "longitude": {"$first": "$longitude"}}},
+        {"$project": {"_id": 0,
+                      "tehsil":    "$_id",
+                      "district":  1,
+                      "province":  1,
+                      "latitude":  1,
+                      "longitude": 1}},
+        {"$limit": 30},
+    ]
+    return await tehsil_monthly_stats_col().aggregate(pipeline).to_list(None)

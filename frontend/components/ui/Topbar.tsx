@@ -6,9 +6,12 @@ import type { District, Location } from '@/lib/types'
 
 interface Props {
   onSelect: (loc: Location) => void
+  onCoordMode?: () => void
+  coordMode?: boolean
+  flyToRef?: { current: ((lat: number, lon: number) => void) | null }
 }
 
-export default function Topbar({ onSelect }: Props) {
+export default function Topbar({ onSelect, onCoordMode, coordMode, flyToRef }: Props) {
   const { user, logout } = useAuth()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<District[]>([])
@@ -28,6 +31,7 @@ export default function Topbar({ onSelect }: Props) {
   }, [query])
 
   function pick(d: District) {
+    flyToRef?.current?.(d.latitude, d.longitude)
     onSelect({ name: d.district, province: d.province, district: d.district, lat: d.latitude, lon: d.longitude })
     setQuery('')
     setOpen(false)
@@ -36,8 +40,17 @@ export default function Topbar({ onSelect }: Props) {
   return (
     <div className="topbar">
       <div className="logo">
+        <div style={{
+          width: 36, height: 36, background: 'var(--surface2)',
+          border: '1px solid var(--border2)', borderRadius: 8,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '1.25rem', flexShrink: 0,
+        }}>🛡</div>
         <div>
           <div className="logo-text">NDMA <span>WeatherLens</span></div>
+          <div style={{ fontSize: '.6rem', color: 'var(--txt3)', letterSpacing: '.03em', marginTop: '-1px' }}>
+            Pakistan Climate Portal
+          </div>
         </div>
       </div>
 
@@ -64,6 +77,14 @@ export default function Topbar({ onSelect }: Props) {
           </div>
         )}
       </div>
+
+      <button
+        className={`ib${coordMode ? ' active' : ''}`}
+        onClick={onCoordMode}
+        title="Custom coordinate mode"
+      >
+        ✛
+      </button>
 
       <div className="user-badge">
         <span className="user-name">{user?.username}</span>

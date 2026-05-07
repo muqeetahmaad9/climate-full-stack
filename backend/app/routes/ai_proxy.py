@@ -50,13 +50,13 @@ async def set_ai_key(body: KeyRequest, request: Request):
 async def ai_proxy(body: AIRequest):
     payload = body.model_dump()
 
+    global _ai_key
     if _ai_key:
         try:
             result = await call_claude(_ai_key, payload)
             return result
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403):
-                global _ai_key
                 _ai_key = None
             raise HTTPException(502, f"Anthropic API error {e.response.status_code}")
         except Exception as e:

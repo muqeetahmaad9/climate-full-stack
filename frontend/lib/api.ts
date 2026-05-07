@@ -58,8 +58,10 @@ export const authApi = {
 export const weatherApi = {
   districts: () => req<District[]>('/api/weather/districts'),
 
-  summary: (lat: number, lon: number) =>
-    req<SummaryResponse>(`/api/weather/summary?lat=${lat}&lon=${lon}`),
+  summary: (lat: number, lon: number, from?: string, to?: string) =>
+    req<SummaryResponse>(
+      `/api/weather/summary?lat=${lat}&lon=${lon}${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}`
+    ),
 
   climate: (lat: number, lon: number, from: string, to: string) =>
     req<ClimateResponse>(

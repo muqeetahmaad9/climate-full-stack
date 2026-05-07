@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-import aiosqlite
-from app.db.sqlite import get_db, nearest_grid
+
+from app.db.mongo import monthly_stats_col, yearly_stats_col, climate_normals_col, weather_data_col
+from app.db.sqlite import nearest_grid
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import user_rate_limit
-from app.services.data_utils import DAILY_COLS, rows_to_daily
+from app.services.data_utils import DAILY_DB_COLS, DAILY_KEYS, rows_to_daily
 from app.services.cache import response_cache
 from app.config import settings
 
@@ -18,23 +19,42 @@ router = APIRouter(
 PAK_LAT = (23.5, 37.5)
 PAK_LON = (60.5, 78.5)
 
+# MongoDB projection for daily weather rows — exclude _id only
+_DAILY_PROJ = {"_id": 0}
+
 
 def _check_coords(lat: float, lon: float) -> None:
     if not (PAK_LAT[0] <= lat <= PAK_LAT[1] and PAK_LON[0] <= lon <= PAK_LON[1]):
         raise HTTPException(400, "Coordinates outside Pakistan bounds")
 
 
+def _bbox(nlat: float, nlon: float, ntol: float) -> dict:
+    return {
+        "latitude":  {"$gte": nlat - ntol, "$lte": nlat + ntol},
+        "longitude": {"$gte": nlon - ntol, "$lte": nlon + ntol},
+    }
+
+
 @router.get("/districts")
-async def districts(db: aiosqlite.Connection = Depends(get_db)):
+async def districts():
     cached = response_cache.get("districts")
     if cached is not None:
         return cached
-    async with db.execute(
-        "SELECT DISTINCT district, province, latitude, longitude "
-        "FROM monthly_stats ORDER BY district"
-    ) as cur:
-        rows = await cur.fetchall()
-    result = [dict(r) for r in rows]
+    pipeline = [
+        {"$group": {"_id": {
+            "district":  "$district",
+            "province":  "$province",
+            "latitude":  "$latitude",
+            "longitude": "$longitude",
+        }}},
+        {"$project": {"_id": 0,
+                      "district":  "$_id.district",
+                      "province":  "$_id.province",
+                      "latitude":  "$_id.latitude",
+                      "longitude": "$_id.longitude"}},
+        {"$sort": {"district": 1}},
+    ]
+    result = await monthly_stats_col().aggregate(pipeline).to_list(None)
     response_cache.set("districts", result)
     return result
 
@@ -43,36 +63,23 @@ async def districts(db: aiosqlite.Connection = Depends(get_db)):
 async def summary(
     lat: float = Query(...),
     lon: float = Query(...),
-    db: aiosqlite.Connection = Depends(get_db),
+    from_date: str = Query(default="", alias="from"),
+    to_date: str = Query(default="", alias="to"),
 ):
     _check_coords(lat, lon)
     nlat, nlon, ntol = nearest_grid(lat, lon)
-    bounds = (nlat - ntol, nlat + ntol, nlon - ntol, nlon + ntol)
+    flt = _bbox(nlat, nlon, ntol)
+    year_start = int(from_date[:4]) if len(from_date) >= 4 and from_date[:4].isdigit() else 0
+    year_end   = int(to_date[:4])   if len(to_date)   >= 4 and to_date[:4].isdigit()   else 9999
 
-    async with db.execute("""
-        SELECT year, T2M, T2M_MAX, T2M_MIN, T2M_MAX_PEAK, T2M_MIN_PEAK,
-               PREC, WS2M, RH2M, SOLAR
-        FROM yearly_stats
-        WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?
-        ORDER BY year
-    """, bounds) as cur:
-        yr = await cur.fetchall()
+    yr = await yearly_stats_col().find(
+        {**flt, "year": {"$gte": year_start, "$lte": year_end}},
+        {"_id": 0},
+    ).sort("year", 1).to_list(None)
 
-    async with db.execute("""
-        SELECT month, T2M_norm, T2M_MAX_norm, T2M_MIN_norm,
-               PREC_norm, WS2M_norm, RH2M_norm, SOLAR_norm
-        FROM climate_normals
-        WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?
-        ORDER BY month
-    """, bounds) as cur:
-        nr = await cur.fetchall()
+    nr = await climate_normals_col().find(flt, {"_id": 0}).sort("month", 1).to_list(None)
 
-    async with db.execute("""
-        SELECT district, province FROM yearly_stats
-        WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?
-        LIMIT 1
-    """, bounds) as cur:
-        info = await cur.fetchone()
+    info = yr[0] if yr else {}
 
     yearly = {
         "years":        [r["year"]          for r in yr],
@@ -99,8 +106,8 @@ async def summary(
     }
 
     return {
-        "district": info["district"] if info else "",
-        "province": info["province"] if info else "",
+        "district": info.get("district", ""),
+        "province": info.get("province", ""),
         "yearly":   yearly,
         "normals":  normals,
     }
@@ -112,33 +119,22 @@ async def climate(
     lon: float = Query(...),
     from_date: str = Query(default="", alias="from"),
     to_date: str = Query(default="", alias="to"),
-    db: aiosqlite.Connection = Depends(get_db),
 ):
     _check_coords(lat, lon)
     nlat, nlon, ntol = nearest_grid(lat, lon)
-    bounds = (nlat - ntol, nlat + ntol, nlon - ntol, nlon + ntol)
+    flt = _bbox(nlat, nlon, ntol)
 
     if from_date and to_date:
         from_int = int(from_date.replace("-", ""))
         to_int   = int(to_date.replace("-", ""))
-        async with db.execute(
-            f"SELECT {DAILY_COLS} FROM weather_data "
-            "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? "
-            "AND date BETWEEN ? AND ? AND temp_mean_c > -999 ORDER BY date",
-            (*bounds, from_int, to_int),
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await weather_data_col().find(
+            {**flt, "date": {"$gte": from_int, "$lte": to_int}, "temp_mean_c": {"$gt": -999}},
+            _DAILY_PROJ,
+        ).sort("date", 1).to_list(None)
         return {"data": rows_to_daily(rows)}
 
-    async with db.execute("""
-        SELECT month, T2M_norm, T2M_MAX_norm, T2M_MIN_norm,
-               PREC_norm, WS2M_norm, RH2M_norm, SOLAR_norm
-        FROM climate_normals
-        WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?
-        ORDER BY month
-    """, bounds) as cur:
-        rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    rows = await climate_normals_col().find(flt, {"_id": 0}).sort("month", 1).to_list(None)
+    return rows
 
 
 @router.get("/stats")
@@ -146,39 +142,28 @@ async def stats(
     lat: float = Query(...),
     lon: float = Query(...),
     year: int | None = Query(default=None),
-    db: aiosqlite.Connection = Depends(get_db),
 ):
     nlat, nlon, ntol = nearest_grid(lat, lon)
-    bounds = (nlat - ntol, nlat + ntol, nlon - ntol, nlon + ntol)
-
+    flt = _bbox(nlat, nlon, ntol)
     if year:
-        async with db.execute(
-            "SELECT * FROM yearly_stats "
-            "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? AND year = ? "
-            "ORDER BY year",
-            (*bounds, year),
-        ) as cur:
-            rows = await cur.fetchall()
-    else:
-        async with db.execute(
-            "SELECT * FROM yearly_stats "
-            "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? ORDER BY year",
-            bounds,
-        ) as cur:
-            rows = await cur.fetchall()
-
-    return [dict(r) for r in rows]
+        flt["year"] = year
+    rows = await yearly_stats_col().find(flt, {"_id": 0}).sort("year", 1).to_list(None)
+    return rows
 
 
 @router.get("/search")
-async def search(
-    q: str = Query(default=""),
-    db: aiosqlite.Connection = Depends(get_db),
-):
-    async with db.execute(
-        "SELECT district, province, latitude, longitude "
-        "FROM monthly_stats WHERE LOWER(district) LIKE ? GROUP BY district LIMIT 20",
-        (f"%{q.strip().lower()}%",),
-    ) as cur:
-        rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+async def search(q: str = Query(default="")):
+    pipeline = [
+        {"$match": {"district": {"$regex": q.strip(), "$options": "i"}}},
+        {"$group": {"_id": "$district",
+                    "province":  {"$first": "$province"},
+                    "latitude":  {"$first": "$latitude"},
+                    "longitude": {"$first": "$longitude"}}},
+        {"$project": {"_id": 0,
+                      "district":  "$_id",
+                      "province":  1,
+                      "latitude":  1,
+                      "longitude": 1}},
+        {"$limit": 20},
+    ]
+    return await monthly_stats_col().aggregate(pipeline).to_list(None)

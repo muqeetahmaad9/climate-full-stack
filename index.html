@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="description" content="NDMA WeatherLens — Real-time and historical climate data for Pakistan by district, powered by NASA POWER and Open-Meteo.">
+<meta name="keywords" content="Pakistan climate, weather data, NDMA, NASA POWER, district weather, PakClim">
+<meta name="author" content="NDMA Pakistan">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NDMA WeatherLens — Pakistan Climate Portal</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌦</text></svg>">
+<meta name="theme-color" content="#0d1117">
+<link rel="preconnect" href="https://api.mapbox.com" crossorigin>
+<link rel="preconnect" href="https://events.mapbox.com">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"></noscript>
+<link rel="preload" href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.js" as="script" crossorigin>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet">
+<style>
+#mapLoader{position:fixed;inset:0;z-index:99999;background:#0d1117;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;transition:opacity .35s ease}
+#mapLoader.out{opacity:0;pointer-events:none}
+.ml-ring{width:42px;height:42px;border:3px solid rgba(255,255,255,.07);border-top-color:#01847f;border-radius:50%;animation:mlspin .7s linear infinite}
+.ml-lbl{color:rgba(255,255,255,.4);font-size:.78rem;letter-spacing:.1em;font-family:system-ui,sans-serif;text-transform:uppercase}
+@keyframes mlspin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body class="dark">
+<div id="mapLoader"><div class="ml-ring"></div><div class="ml-lbl">Loading map…</div></div>
+<div class="app">
+
+  <!-- MAP — fills full background -->
+  <div class="map-wrap" id="mapWrap">
+  <div id="cesiumContainer" style="position:absolute;inset:0;z-index:0;"></div>
+
+    
+
+    <!-- Coordinate bar -->
+    <div class="cbar" id="cbar" style="bottom:24px;left:50%;transform:translateX(-50%);margin-right:calc(var(--panel-w) / 2)">Lat — · Lon —</div>
+    <div class="cbadge" id="cbadge">✛ Click anywhere to set coordinates</div>
+
+    <!-- Province legend -->
+    <div class="legend">
+      <div class="lt">Provinces</div>
+      <div class="li"><div class="ld" style="background:#d45510"></div>Punjab</div>
+      <div class="li"><div class="ld" style="background:#2060e8"></div>Sindh</div>
+      <div class="li"><div class="ld" style="background:#1a9e4d"></div>KPK</div>
+      <div class="li"><div class="ld" style="background:#b87210"></div>Balochistan</div>
+      <div class="li"><div class="ld" style="background:#8b45ff"></div>Gilgit-B.</div>
+      <div class="li"><div class="ld" style="background:#a84f12"></div>AJK</div>
+      <div class="li"><div class="ld" style="background:#e83030"></div>Islamabad</div>
+      <div class="lsep"></div>
+      <div class="li"><div class="ld" style="background:#64748b;border-radius:50%"></div>Settlement</div>
+    </div>
+
+    <!-- Layer toggles -->
+    <div class="map-controls">
+      <div class="lt">Layers</div>
+      <button class="tb on-b" id="bNational" title="National boundary" aria-pressed="true"><span class="cdot" style="background:#f97316"></span>National</button>
+      <button class="tb on-b" id="bProvincial" title="Provincial boundaries" aria-pressed="true"><span class="cdot multi"></span>Provincial</button>
+      <button class="tb on-o" id="bBound" title="District boundaries" aria-pressed="true"><span class="cdot" style="background:#2563eb"></span>Districts</button>
+      <button class="tb" id="bDots" aria-pressed="false"><span class="cdot" style="background:#94a3b8"></span>Settlements</button>
+      <button class="tb on-g" id="bLabels" aria-pressed="true"><span class="cdot" style="background:#8b1a1a"></span>Labels</button>
+      <div class="lsep" style="margin:2px 0"></div>
+      <select class="csel" id="provFilt">
+        <option value="">All Provinces</option>
+        <option value="Punjab">Punjab</option>
+        <option value="Sindh">Sindh</option>
+        <option value="Khyber Pakhtunkhwa">KPK</option>
+        <option value="Balochistan">Balochistan</option>
+        <option value="Gilgit Baltistan">Gilgit-Baltistan</option>
+        <option value="Azad Kashmir">Azad Kashmir</option>
+        <option value="Islamabad">Islamabad</option>
+      </select>
+    </div>
+
+    <!-- Zoom controls -->
+    <div class="zoom-group">
+      <button class="zb" id="zi" aria-label="Zoom in">+</button>
+      <button class="zb" id="zo" aria-label="Zoom out">−</button>
+      <button class="zb" id="zr" aria-label="Reset view">⊡</button>
+    </div>
+  </div>
+
+  <!-- FLOATING TOPBAR -->
+  <div class="topbar">
+    <div class="logo">
+      <div class="logo-icon">
+        <img src="ndma logo.png" alt="NDMA" style="width:40px;height:40px;object-fit:contain;border-radius:4px" onerror="this.style.display='none';this.parentElement.innerHTML='🛡'">
+      </div>
+      <div>
+        <div class="logo-text">NDMA <span>WeatherLens</span></div>
+        <div style="font-size:.6rem;color:var(--txt3);letter-spacing:.03em;margin-top:-1px">Pakistan Climate Portal</div>
+      </div>
+    </div>
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input id="si" type="text" placeholder="Search settlement or district…" autocomplete="off">
+      <div id="sr"></div>
+    </div>
+    <button class="ib" id="cmBtn" title="Custom coordinate mode">✛</button>
+  </div>
+
+  <!-- SIDEBAR TOGGLE BUTTON -->
+  <button class="side-toggle open" id="sideToggle" title="Toggle panel">❯</button>
+
+  <!-- FLOATING SIDE PANEL -->
+  <div class="side">
+    <div class="stabs">
+      <div class="stab-row">
+        <button class="stab active" data-t="climate">Climate</button>
+        <button class="stab" data-t="yearly">Yearly</button>
+        <button class="stab" data-t="monthly">Monthly</button>
+      </div>
+      <div class="stab-row">
+        <button class="stab" data-t="compare">Compare</button>
+        <button class="stab" data-t="explorer">Explorer</button>
+        <button class="stab" data-t="export">Export</button>
+      </div>
+    </div>
+
+    <!-- CLIMATE TAB -->
+    <div class="tp active" id="tab-climate">
+      <div id="welState">
+        <div class="wel">
+          <div class="wel-icon">🗺️</div>
+          <div class="wel-t">Select a location on the map</div>
+          <div class="wel-sub">Click any district or settlement to load climate data for that location.</div>
+          <div class="step"><div class="sn">1</div><div class="st">Click a district or settlement dot on the map</div></div>
+          <div class="step"><div class="sn">2</div><div class="st">Choose a date range or quick preset</div></div>
+          <div class="step"><div class="sn">3</div><div class="st">Fetch 30 years of NASA climate data</div></div>
+        </div>
+      </div>
+      <div id="datState" style="display:none;flex-direction:column;flex:1">
+        <div class="lhdr">
+          <div class="lname" id="lname">—</div>
+          <div class="lmeta">
+            <span class="lprov" id="lprov"></span>
+            <span class="ldist" id="ldist"></span>
+            <span class="lcnt" id="lcnt"></span>
+          </div>
+          <div class="lcoords" id="lcoords"></div>
+        </div>
+        <div class="dsec">
+          <div class="slbl">Select Period</div>
+          <div class="prow" style="flex-wrap:wrap;gap:5px">
+            <button class="pb" data-p="p1995">1995–2000</button>
+            <button class="pb" data-p="p2001">2001–2010</button>
+            <button class="pb" data-p="p2011">2011–2020</button>
+            <button class="pb" data-p="p2021">2021–2025</button>
+            <button class="pb" data-p="p30yr" style="background:var(--blue-light);color:var(--blue);border-color:var(--blue);font-weight:700">⚡ 30yr All</button>
+          </div>
+          <div class="drow" style="margin-top:6px"><label>From</label><input type="date" id="dFrom" value="1995-01-01"></div>
+          <div class="drow"><label>To</label><input type="date" id="dTo" value="2025-12-31"></div>
+          <button class="fbtn" id="fbtn">⬇ Fetch Climate Data</button>
+        </div>
+        <div class="pwrap" id="pwrap">
+          <div class="plbl"><span id="plbl">Fetching…</span><span id="ppct">0%</span></div>
+          <div class="pbar"><div class="pfill" id="pfill"></div></div>
+          <div class="pinfo" id="pinfo"></div>
+        </div>
+        <div id="cres" style="display:none;flex-direction:column"></div>
+      </div>
+    </div>
+
+    <!-- YEARLY TAB -->
+    <div class="tp" id="tab-yearly">
+      <div id="yEmpty" class="empty">Fetch climate data first to see yearly trends.</div>
+      <div id="yContent" style="display:none;flex-direction:column;padding:6px 0">
+        <div id="yKpi" style="display:flex;gap:6px;flex-wrap:wrap;padding:12px 14px;background:var(--surface2);border-bottom:1px solid var(--border)">
+          <div class="ykpi" id="ykYear">—</div>
+          <div class="ykpi hot" id="ykMax">— <span>Max</span></div>
+          <div class="ykpi cold" id="ykMin">— <span>Min</span></div>
+          <div class="ykpi" id="ykAvg">— <span>Avg °C</span></div>
+          <div class="ykpi rain" id="ykRain">— <span>Rain</span></div>
+          <div class="ykpi wind" id="ykWind">— <span>Wind</span></div>
+        </div>
+        <div class="ysec">
+          <div class="ysec-hd">
+            <div class="ysec-hd-t"><span class="ysec-dot" style="background:#c0392b"></span><div class="slbl" style="margin:0;color:var(--txt2)">Temperature (°C)</div></div>
+            <div style="display:flex;gap:5px;align-items:center">
+              <button class="yctrl" id="yTplay">⏸</button>
+              <button class="yctrl" id="yTreset">↺</button>
+              <label style="font-size:.65rem;color:var(--txt3);display:flex;align-items:center;gap:4px"><input type="checkbox" id="yTband" style="width:12px;height:12px"> Range</label>
+            </div>
+          </div>
+          <div class="ysec-body"><div class="cwrap"><canvas id="yTC"></canvas></div></div>
+        </div>
+        <div class="ysec">
+          <div class="ysec-hd">
+            <div class="ysec-hd-t"><span class="ysec-dot" style="background:#06b6d4"></span><div class="slbl" style="margin:0;color:var(--txt2)">Rainfall (mm)</div></div>
+            <div style="display:flex;gap:5px;align-items:center">
+              <button class="yctrl" id="yRplay">⏸</button><button class="yctrl" id="yRreset">↺</button>
+              <label style="font-size:.65rem;color:var(--txt3);display:flex;align-items:center;gap:4px"><input type="checkbox" id="yRavg" style="width:12px;height:12px"> Avg</label>
+            </div>
+          </div>
+          <div class="ysec-body"><div class="cwrap"><canvas id="yRC"></canvas></div></div>
+        </div>
+        <div class="ysec">
+          <div class="ysec-hd">
+            <div class="ysec-hd-t"><span class="ysec-dot" style="background:#8b1a1a"></span><div class="slbl" style="margin:0;color:var(--txt2)">Wind Speed (m/s)</div></div>
+            <div style="display:flex;gap:5px"><button class="yctrl" id="yWplay">⏸</button><button class="yctrl" id="yWreset">↺</button></div>
+          </div>
+          <div class="ysec-body"><div class="cwrap"><canvas id="yWC"></canvas></div></div>
+        </div>
+        <div class="ysec" style="padding-bottom:6px">
+          <div class="ysec-hd"><div class="ysec-hd-t"><span class="ysec-dot" style="background:#f59e0b"></span><div class="slbl" style="margin:0;color:var(--txt2)">Click a year</div></div></div>
+          <div class="ysec-body"><div id="yYearGrid" style="display:flex;flex-wrap:wrap;gap:5px"></div></div>
+        </div>
+        <div class="ysec" style="padding-bottom:6px">
+          <div class="ysec-hd"><div class="ysec-hd-t"><span class="ysec-dot" style="background:#a78bfa"></span><div class="slbl" style="margin:0;color:var(--txt2)">Year-by-Year Summary</div></div></div>
+          <div class="ysec-body"><div id="ytw"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MONTHLY TAB -->
+    <div class="tp" id="tab-monthly">
+      <div id="mEmpty" class="empty">Fetch climate data first to see monthly patterns.</div>
+      <div id="mContent" style="display:none;flex-direction:column;padding:4px 0">
+        <div class="msec"><div class="slbl" style="margin-bottom:8px">Mean Monthly Temperature</div><div class="cwrap"><canvas id="mTC"></canvas></div></div>
+        <div class="msec"><div class="slbl" style="margin-bottom:8px">Mean Monthly Rainfall</div><div class="cwrap"><canvas id="mRC"></canvas></div></div>
+        <div class="msec"><div class="slbl" style="margin-bottom:8px">Mean Monthly Wind Speed</div><div class="cwrap"><canvas id="mWC"></canvas></div></div>
+      </div>
+    </div>
+
+    
+    <!-- COMPARE TAB -->
+    <div class="tp" id="tab-compare">
+      <div id="cmpEmpty" class="empty">Fetch climate data first to use the compare tool.</div>
+      <div id="cmpContent" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+
+        <!-- Year pickers -->
+        <div style="padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border);flex-shrink:0">
+          <div class="slbl" style="margin-bottom:8px">Select Two Years to Compare</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="flex:1">
+              <div style="font-size:.65rem;color:var(--txt3);margin-bottom:4px">Year A</div>
+              <select id="cmpYearA" class="csel" style="width:100%"></select>
+            </div>
+            <div style="color:var(--txt3);font-size:1rem;margin-top:14px">vs</div>
+            <div style="flex:1">
+              <div style="font-size:.65rem;color:var(--txt3);margin-bottom:4px">Year B</div>
+              <select id="cmpYearB" class="csel" style="width:100%"></select>
+            </div>
+          </div>
+          <button id="cmpGoBtn" class="cmp-go-btn">Compare Years</button>
+        </div>
+
+        <!-- Results -->
+        <div id="cmpResults" style="flex:1;overflow-y:auto;padding:10px 0;display:none;flex-direction:column">
+
+          <!-- Month selector for daily view -->
+          <div style="padding:6px 14px 0;flex-shrink:0">
+            <div class="slbl" style="margin-bottom:6px">Monthly Overview</div>
+          </div>
+
+          <!-- Monthly charts -->
+          <div class="msec">
+            <div class="slbl" style="margin-bottom:4px">🌡 Temperature by Month (°C)</div>
+            <div class="cwrap"><canvas id="cmpTC"></canvas></div>
+          </div>
+          <div class="msec">
+            <div class="slbl" style="margin-bottom:4px">🌧 Rainfall by Month (mm/day avg)</div>
+            <div class="cwrap"><canvas id="cmpPC"></canvas></div>
+          </div>
+          <div class="msec">
+            <div class="slbl" style="margin-bottom:4px">💨 Wind by Month (m/s avg)</div>
+            <div class="cwrap"><canvas id="cmpWC"></canvas></div>
+          </div>
+
+          <!-- Month picker for daily drill-down -->
+          <div style="padding:8px 14px 4px;border-top:1px solid var(--border);margin-top:4px;flex-shrink:0">
+            <div class="slbl" style="margin-bottom:6px">Day-by-Day Detail — pick a month</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap" id="cmpMonthBtns"></div>
+          </div>
+
+          <!-- Daily charts -->
+          <div class="msec" id="cmpDailySection">
+            <div class="slbl" style="margin-bottom:4px" id="cmpDailyLabel">🌡 Daily Temperature</div>
+            <div class="cwrap"><canvas id="cmpDTC"></canvas></div>
+          </div>
+          <div class="msec">
+            <div class="slbl" style="margin-bottom:4px">🌧 Daily Rainfall (mm)</div>
+            <div class="cwrap"><canvas id="cmpDPC"></canvas></div>
+          </div>
+          <div class="msec">
+            <div class="slbl" style="margin-bottom:4px">💨 Daily Wind (m/s)</div>
+            <div class="cwrap"><canvas id="cmpDWC"></canvas></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+<!-- EXPLORER TAB -->
+    <div class="tp" id="tab-explorer">
+      <div id="exEmpty" class="empty">Fetch climate data first, then explore day by day.</div>
+      <div id="exContent" style="display:none;flex-direction:column">
+        <div id="exBread" style="display:flex;align-items:center;gap:4px;padding:10px 16px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:.72rem;flex-wrap:wrap"></div>
+        <div id="exYears" style="padding:12px 14px">
+          <div class="slbl" style="margin-bottom:8px">Select a Year</div>
+          <div id="exYearGrid" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+        </div>
+        <div id="exMonths" style="display:none;padding:12px 14px">
+          <div class="slbl" style="margin-bottom:8px" id="exMonthTitle">Select a Month</div>
+          <div id="exMonthGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px"></div>
+          <div id="exMonthCharts" style="margin-top:10px"></div>
+        </div>
+        <div id="exDays" style="display:none;padding:12px 14px">
+          <div class="slbl" style="margin-bottom:8px" id="exDayTitle">Daily Weather</div>
+          <div id="exDayChart" style="margin-bottom:10px"><canvas id="exDC"></canvas></div>
+          <div id="exDayTable" style="overflow-x:auto"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EXPORT TAB -->
+    <div class="tp" id="tab-export">
+      <div style="padding:16px 18px">
+        <div class="slbl" style="margin-bottom:12px">Export Current Data</div>
+        <div id="expInfo" style="font-size:.75rem;color:var(--txt3);margin-bottom:14px;line-height:1.6">No data loaded yet. Fetch climate data first.</div>
+        <button class="eb" id="eCSV">📄 Day-by-Day CSV</button>
+        <button class="eb" id="eYCSV">📊 Yearly Summary CSV</button>
+        <button class="eb" id="eMCSV">📅 Monthly Climatology CSV</button>
+        <button class="eb" id="eJSON">{ } Raw JSON</button>
+        <div style="margin-top:14px;padding:12px 14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
+          <div class="slbl" style="margin-bottom:8px">Parameters included</div>
+          <div style="font-size:.72rem;color:var(--txt2);line-height:2;font-family:'JetBrains Mono',monospace">T2M · T2M_MAX · T2M_MIN<br>PRECTOTCORR · WS2M · RH2M<br>ALLSKY_SFC_SW_DWN</div>
+        </div>
+
+        <!-- CACHE MANAGER -->
+        <div style="margin-top:18px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div class="slbl" style="margin:0">💾 Cached Locations</div>
+            <div style="display:flex;gap:6px">
+              <button class="eb" id="cacheRefreshBtn" style="margin:0;padding:5px 10px;font-size:.68rem">↺ Refresh</button>
+              <button class="eb" id="cacheClearAllBtn" style="margin:0;padding:5px 10px;font-size:.68rem;color:var(--red);border-color:rgba(220,38,38,.3)">🗑 Clear All</button>
+            </div>
+          </div>
+          <div id="cacheStorageInfo" style="font-size:.68rem;color:var(--txt3);margin-bottom:10px;font-family:'JetBrains Mono',monospace"></div>
+          <div id="cacheList" style="display:flex;flex-direction:column;gap:6px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="TIP">
+  <div class="tip-name" id="tipName"></div>
+  <div class="tip-meta" id="tipMeta"></div>
+  <div class="tip-coords" id="tipCoords"></div>
+  <div class="tip-hint" id="tipHint"></div>
+</div>
+<div id="QSTAT"></div>
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.js" defer></script>
+<script src="app.js" defer></script>
+
+</body>
+</html>

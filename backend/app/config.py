@@ -2,7 +2,6 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    mongo_uri: str = "mongodb://mongo:27017/pakclim"
     jwt_secret: str = "change_this"
     jwt_expire_minutes: int = 60
     jwt_refresh_expire_days: int = 7
@@ -12,7 +11,7 @@ class Settings(BaseSettings):
     rate_limit_db_query: int = 60
     rate_limit_auth: int = 5
 
-    sqlite_db_path: str = "/data/weather_data.db"
+    mongo_uri: str = "mongodb://localhost:27017"
     environment: str = "development"
 
     class Config:

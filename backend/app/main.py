@@ -3,8 +3,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
+from app.db.mongo import connect_mongo, close_mongo, get_mongo_db
 from app.db.sqlite import init_grid_cache
-from app.db.mongo import connect_mongo, close_mongo
 from app.routes import weather, tehsil, ai_proxy, auth
 
 
@@ -38,29 +38,19 @@ app.include_router(ai_proxy.router,  prefix="/api/ai")
 
 @app.get("/health", tags=["system"])
 async def health():
-    from app.db.sqlite import _grid_cache
-    import aiosqlite
-    from app.config import settings
+    from app.db.sqlite import _grid_sorted
 
-    tables: set[str] = set()
-    try:
-        async with aiosqlite.connect(settings.sqlite_db_path) as db:
-            async with db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ) as cur:
-                rows = await cur.fetchall()
-        tables = {r[0] for r in rows}
-    except Exception:
-        pass
+    db = get_mongo_db()
+    collections = set(await db.list_collection_names())
 
-    district_ready = {"monthly_stats", "yearly_stats", "climate_normals"}.issubset(tables)
-    tehsil_ready   = {"tehsil_monthly_stats", "tehsil_yearly_stats", "tehsil_normals"}.issubset(tables)
+    district_ready = {"monthly_stats", "yearly_stats", "climate_normals"}.issubset(collections)
+    tehsil_ready   = {"tehsil_monthly_stats", "tehsil_yearly_stats", "tehsil_normals"}.issubset(collections)
 
     return {
-        "status":        "ok",
-        "server":        "PakClim FastAPI v3.0",
-        "db":            settings.sqlite_db_path,
-        "grid_points":   len(_grid_cache) if _grid_cache else 0,
+        "status":         "ok",
+        "server":         "PakClim FastAPI v3.0",
+        "db":             "MongoDB",
+        "grid_points":    len(_grid_sorted) if _grid_sorted else 0,
         "district_ready": district_ready,
         "tehsil_ready":   tehsil_ready,
     }
