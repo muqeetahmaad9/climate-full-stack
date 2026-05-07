@@ -7,9 +7,11 @@ from collections import defaultdict
 from time import monotonic
 from fastapi import Depends, HTTPException, Request
 from app.middleware.auth import get_current_user
+from app.logger import get_logger
 
 _windows: dict[str, list[float]] = defaultdict(list)
 _lock = asyncio.Lock()
+_log = get_logger(__name__)
 
 
 async def _check(key: str, limit: int, window_seconds: int = 60) -> None:
@@ -20,6 +22,7 @@ async def _check(key: str, limit: int, window_seconds: int = 60) -> None:
         # Prune expired entries in-place
         _windows[key] = [t for t in entries if t > cutoff]
         if len(_windows[key]) >= limit:
+            _log.warning("Rate limit exceeded: key=%s limit=%d window=%ds", key, limit, window_seconds)
             raise HTTPException(
                 status_code=429,
                 detail=f"Rate limit exceeded. Max {limit} requests per {window_seconds}s.",

@@ -6,13 +6,20 @@ from fastapi.middleware.gzip import GZipMiddleware
 from app.db.mongo import connect_mongo, close_mongo, get_mongo_db
 from app.db.sqlite import init_grid_cache
 from app.routes import weather, tehsil, ai_proxy, auth
+from app.logger import setup_logging, get_logger
+
+setup_logging()
+_log = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _log.info("PakClim API starting up")
     await connect_mongo()
     await init_grid_cache()
+    _log.info("Startup complete — MongoDB and grid cache ready")
     yield
+    _log.info("PakClim API shutting down")
     await close_mongo()
 
 

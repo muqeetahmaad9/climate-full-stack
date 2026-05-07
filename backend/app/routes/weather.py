@@ -7,6 +7,9 @@ from app.middleware.rate_limit import user_rate_limit
 from app.services.data_utils import DAILY_DB_COLS, DAILY_KEYS, rows_to_daily
 from app.services.cache import response_cache
 from app.config import settings
+from app.logger import get_logger
+
+_log = get_logger(__name__)
 
 router = APIRouter(
     tags=["weather"],
@@ -25,6 +28,7 @@ _DAILY_PROJ = {"_id": 0}
 
 def _check_coords(lat: float, lon: float) -> None:
     if not (PAK_LAT[0] <= lat <= PAK_LAT[1] and PAK_LON[0] <= lon <= PAK_LON[1]):
+        _log.warning("Coord out of bounds: lat=%.4f lon=%.4f", lat, lon)
         raise HTTPException(400, "Coordinates outside Pakistan bounds")
 
 
@@ -39,6 +43,7 @@ def _bbox(nlat: float, nlon: float, ntol: float) -> dict:
 async def districts():
     cached = response_cache.get("districts")
     if cached is not None:
+        _log.debug("Districts served from cache")
         return cached
     pipeline = [
         {"$group": {"_id": {
@@ -56,6 +61,7 @@ async def districts():
     ]
     result = await monthly_stats_col().aggregate(pipeline).to_list(None)
     response_cache.set("districts", result)
+    _log.info("Districts fetched from DB (%d records)", len(result))
     return result
 
 
@@ -68,6 +74,7 @@ async def summary(
 ):
     _check_coords(lat, lon)
     nlat, nlon, ntol = nearest_grid(lat, lon)
+    _log.info("Summary query: lat=%.4f lon=%.4f grid=(%.4f,%.4f) %s→%s", lat, lon, nlat, nlon, from_date, to_date)
     flt = _bbox(nlat, nlon, ntol)
     year_start = int(from_date[:4]) if len(from_date) >= 4 and from_date[:4].isdigit() else 0
     year_end   = int(to_date[:4])   if len(to_date)   >= 4 and to_date[:4].isdigit()   else 9999

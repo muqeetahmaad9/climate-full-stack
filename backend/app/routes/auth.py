@@ -12,6 +12,9 @@ from app.services.auth_service import (
 from app.db.mongo import users_col, tokens_col
 from app.middleware.rate_limit import ip_rate_limit
 from app.config import settings
+from app.logger import get_logger
+
+_log = get_logger(__name__)
 
 router = APIRouter(
     tags=["auth"],
@@ -33,8 +36,10 @@ def _doc_to_user(doc: dict) -> UserOut:
 @router.post("/register", status_code=201)
 async def register(body: UserCreate):
     if await users_col().find_one({"email": body.email}):
+        _log.warning("Register rejected: email already exists (%s)", body.email)
         raise HTTPException(400, "Email already registered")
     if await users_col().find_one({"username": body.username}):
+        _log.warning("Register rejected: username already exists (%s)", body.username)
         raise HTTPException(400, "Username already taken")
 
     uid        = str(uuid4())
@@ -49,6 +54,7 @@ async def register(body: UserCreate):
         "created_at": created_at,
     })
 
+    _log.info("User registered: %s (%s)", body.username, body.email)
     user = UserOut(id=uid, username=body.username, email=body.email, role="user",
                    created_at=datetime.fromisoformat(created_at))
     return {"message": "Registered successfully", "user": user}
@@ -59,8 +65,10 @@ async def login(body: UserLogin):
     user = await users_col().find_one({"email": body.email})
 
     if not user or not verify_password(body.password, user["hashed_pw"]):
+        _log.warning("Login failed: bad credentials for %s", body.email)
         raise HTTPException(401, "Invalid email or password")
     if not user["is_active"]:
+        _log.warning("Login rejected: account disabled (%s)", body.email)
         raise HTTPException(403, "Account is disabled")
 
     token_data = {"sub": user["_id"], "email": user["email"], "role": user["role"]}
@@ -73,6 +81,7 @@ async def login(body: UserLogin):
         upsert=True,
     )
 
+    _log.info("Login success: %s (role=%s)", body.email, user["role"])
     return TokenResponse(access_token=access, refresh_token=refresh, user=_doc_to_user(user))
 
 
@@ -97,6 +106,7 @@ async def refresh(creds: HTTPAuthorizationCredentials = Depends(_bearer)):
 @router.post("/logout")
 async def logout(creds: HTTPAuthorizationCredentials = Depends(_bearer)):
     await tokens_col().delete_one({"token": creds.credentials})
+    _log.info("User logged out (token revoked)")
     return {"message": "Logged out successfully"}
 
 
