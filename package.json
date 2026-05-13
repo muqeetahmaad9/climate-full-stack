@@ -1,11 +1,12 @@
 {
   "name": "pakclim",
   "private": true,
+  "description": "NDMA WeatherLens — monorepo scripts",
   "scripts": {
-    "start": "npm run frontend",
-    "frontend": "cd frontend && npm run dev",
-    "backend": "cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
-    "install:frontend": "cd frontend && npm install",
-    "build": "cd frontend && npm run build"
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+    "install": "cd frontend && npm install",
+    "build": "cd frontend && npm run build",
+    "lint": "cd frontend && npm run lint"
   }
 }

@@ -1,5 +1,20 @@
 services:
 
+  # ── Redis cache ────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - pakclim
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   # ── MongoDB ────────────────────────────────────────────────────
   mongo:
     image: mongo:7.0
@@ -23,14 +38,16 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      MONGO_URI:       mongodb://mongo:27017/pakclim
-      SQLITE_DB_PATH:  /data/weather_data.db
+      MONGO_URI:  mongodb://mongo:27017/pakclim
+      REDIS_URI:  redis://redis:6379
     volumes:
-      - ./data:/data:ro          # mount SQLite DB (read-only)
+      - ./data:/data:ro
     ports:
       - "8000:8000"
     depends_on:
       mongo:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - pakclim
@@ -51,7 +68,7 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV:    production
-      BACKEND_URL: http://backend:8000   # server-side proxy target
+      BACKEND_URL: http://backend:8000
     ports:
       - "3000:3000"
     depends_on:
@@ -63,6 +80,7 @@ services:
 # ── Volumes & networks ─────────────────────────────────────────
 volumes:
   mongo_data:
+  redis_data:
 
 networks:
   pakclim:

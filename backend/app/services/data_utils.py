@@ -23,11 +23,17 @@ def rows_to_daily(rows: list[dict]) -> dict:
     """
     Convert a list of MongoDB documents into a columnar dict.
     O(D) time and O(D) space where D = number of daily rows — optimal.
+    Deduplicates by date (bbox queries can match multiple adjacent grid points).
     """
     data: dict = {"dates": [], **{k: [] for k in DAILY_KEYS}}
     dates = data["dates"]
+    seen: set[str] = set()
     for r in rows:
-        dates.append(str(r["date"]))
+        d = str(r["date"])
+        if d in seen:
+            continue
+        seen.add(d)
+        dates.append(d)
         for key, col in _KEY_COL_PAIRS:
             data[key].append(r[col])
     return data

@@ -248,6 +248,9 @@ export default function SidePanel({ location, open = true }: Props) {
   const [dailyError, setDailyError] = useState('')
   const [progress, setProgress]     = useState(0)
 
+  // Reset to Climate tab whenever a new district is selected
+  useEffect(() => { if (location) setTab('Climate') }, [location])
+
   // Yearly tab state
   const [selYear, setSelYear] = useState<number | null>(null)
 

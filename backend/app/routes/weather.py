@@ -1,11 +1,13 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db.mongo import monthly_stats_col, yearly_stats_col, climate_normals_col, weather_data_col
-from app.db.sqlite import nearest_grid
+from app.db.sqlite import nearest_grid, nearest_weather_grid
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import user_rate_limit
 from app.services.data_utils import DAILY_DB_COLS, DAILY_KEYS, rows_to_daily
-from app.services.cache import response_cache
+from app.services.cache import cache_get, cache_set
 from app.config import settings
 from app.logger import get_logger
 
@@ -41,7 +43,7 @@ def _bbox(nlat: float, nlon: float, ntol: float) -> dict:
 
 @router.get("/districts")
 async def districts():
-    cached = response_cache.get("districts")
+    cached = await cache_get("districts")
     if cached is not None:
         _log.debug("Districts served from cache")
         return cached
@@ -60,7 +62,7 @@ async def districts():
         {"$sort": {"district": 1}},
     ]
     result = await monthly_stats_col().aggregate(pipeline).to_list(None)
-    response_cache.set("districts", result)
+    await cache_set("districts", result)
     _log.info("Districts fetched from DB (%d records)", len(result))
     return result
 
@@ -79,12 +81,18 @@ async def summary(
     year_start = int(from_date[:4]) if len(from_date) >= 4 and from_date[:4].isdigit() else 0
     year_end   = int(to_date[:4])   if len(to_date)   >= 4 and to_date[:4].isdigit()   else 9999
 
-    yr = await yearly_stats_col().find(
+    yr_raw = await yearly_stats_col().find(
         {**flt, "year": {"$gte": year_start, "$lte": year_end}},
         {"_id": 0},
     ).sort("year", 1).to_list(None)
 
-    nr = await climate_normals_col().find(flt, {"_id": 0}).sort("month", 1).to_list(None)
+    # Deduplicate by year — bbox may overlap an adjacent centroid, yielding N rows per year
+    yr = list({r["year"]: r for r in yr_raw}.values())
+    yr.sort(key=lambda r: r["year"])
+
+    nr_raw = await climate_normals_col().find(flt, {"_id": 0}).sort("month", 1).to_list(None)
+    nr = list({r["month"]: r for r in nr_raw}.values())
+    nr.sort(key=lambda r: r["month"])
 
     info = yr[0] if yr else {}
 
@@ -128,7 +136,7 @@ async def climate(
     to_date: str = Query(default="", alias="to"),
 ):
     _check_coords(lat, lon)
-    nlat, nlon, ntol = nearest_grid(lat, lon)
+    nlat, nlon, ntol = nearest_weather_grid(lat, lon)
     flt = _bbox(nlat, nlon, ntol)
 
     if from_date and to_date:
@@ -161,7 +169,7 @@ async def stats(
 @router.get("/search")
 async def search(q: str = Query(default="")):
     pipeline = [
-        {"$match": {"district": {"$regex": q.strip(), "$options": "i"}}},
+        {"$match": {"district": {"$regex": re.escape(q.strip()), "$options": "i"}}},
         {"$group": {"_id": "$district",
                     "province":  {"$first": "$province"},
                     "latitude":  {"$first": "$latitude"},

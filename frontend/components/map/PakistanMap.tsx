@@ -61,6 +61,8 @@ interface LiveCard {
   wind?: number
   precip?: number
   code?: number
+  desc?: string
+  icon?: string
   time?: string
   error?: string
 }
@@ -176,21 +178,31 @@ export default function PakistanMap({ onSelect, flyToRef }: Props) {
         name: p.name, tehsil: p.tehsil, district: p.district, province: p.province,
         lat, lon, loading: true,
       })
-      fetch(
-        `https://api.open-meteo.com/v1/forecast` +
-        `?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}` +
-        `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,precipitation,weather_code` +
-        `&timezone=auto&forecast_days=1`
-      )
+      fetch(`https://wttr.in/${lat.toFixed(4)},${lon.toFixed(4)}?format=j1`)
         .then(r => r.json())
         .then(data => {
-          const c = data.current
+          const c = data?.current_condition?.[0]
+          if (!c) {
+            setLiveCard(prev => prev ? { ...prev, loading: false, error: 'Weather unavailable' } : null)
+            return
+          }
+          const wCode = parseInt(c.weatherCode ?? '0')
+          const desc  = c.weatherDesc?.[0]?.value ?? ''
+          const icon  = WMO_ICON[wCode] ?? (
+            wCode <= 113 ? '☀️' : wCode <= 119 ? '⛅' : wCode <= 122 ? '☁️' :
+            wCode <= 260 ? '🌫' : wCode <= 308 ? '🌧' : wCode <= 338 ? '❄️' :
+            wCode <= 359 ? '🌦' : wCode <= 377 ? '🌨' : '⛈'
+          )
           setLiveCard(prev => prev ? {
             ...prev, loading: false,
-            temp: c.temperature_2m,      feelsLike: c.apparent_temperature,
-            humidity: c.relative_humidity_2m, wind: c.wind_speed_10m,
-            precip: c.precipitation,      code: c.weather_code,
-            time: c.time,
+            temp:      parseFloat(c.temp_C),
+            feelsLike: parseFloat(c.FeelsLikeC),
+            humidity:  parseInt(c.humidity),
+            wind:      parseFloat(c.windspeedKmph),
+            precip:    parseFloat(c.precipMM ?? '0'),
+            code:      wCode,
+            desc, icon,
+            time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           } : null)
         })
         .catch(() => setLiveCard(prev => prev ? { ...prev, loading: false, error: 'Failed to fetch weather' } : null))
@@ -248,7 +260,20 @@ export default function PakistanMap({ onSelect, flyToRef }: Props) {
             <Source id="provincial" type="geojson" data="/geojson/Provincial_Boundary.geojson">
               <Layer id="provincial-fill" type="fill" filter={provincialFilter}
                 layout={{ visibility: layers.provincial ? 'visible' : 'none' }}
-                paint={{ 'fill-color': 'rgba(0,0,0,0.06)', 'fill-outline-color': 'transparent' }} />
+                paint={{
+                  'fill-color': [
+                    'match', ['get', 'name'],
+                    'Punjab',             '#d45510',
+                    'Sindh',              '#2060e8',
+                    'Khyber Pakhtunkhwa', '#1a9e4d',
+                    'Balochistan',        '#b87210',
+                    'Gilgit Baltistan',   '#8b45ff',
+                    'Azad Kashmir',       '#a84f12',
+                    'Islamabad',          '#e83030',
+                    'rgba(0,0,0,0.06)',
+                  ],
+                  'fill-opacity': 0.25,
+                }} />
               <Layer id="provincial-line" type="line" filter={provincialFilter}
                 layout={{ visibility: layers.provincial ? 'visible' : 'none' }}
                 paint={{ 'line-color': '#000000', 'line-width': 1.5, 'line-opacity': 0.85 }} />
@@ -309,18 +334,18 @@ export default function PakistanMap({ onSelect, flyToRef }: Props) {
           ) : (
             <div className="lwc-body">
               <div className="lwc-main">
-                <span className="lwc-icon">{WMO_ICON[liveCard.code ?? 0] ?? '🌡'}</span>
+                <span className="lwc-icon">{liveCard.icon ?? '🌡'}</span>
                 <span className="lwc-temp">{liveCard.temp?.toFixed(1)}°C</span>
-                <span className="lwc-desc">{WMO_LABEL[liveCard.code ?? 0] ?? '—'}</span>
+                <span className="lwc-desc">{liveCard.desc ?? '—'}</span>
               </div>
               <div className="lwc-grid">
                 <div className="lwc-stat"><span>Feels like</span><b>{liveCard.feelsLike?.toFixed(1)}°C</b></div>
                 <div className="lwc-stat"><span>Humidity</span><b>{liveCard.humidity}%</b></div>
-                <div className="lwc-stat"><span>Wind</span><b>{liveCard.wind?.toFixed(1)} m/s</b></div>
+                <div className="lwc-stat"><span>Wind</span><b>{liveCard.wind?.toFixed(1)} km/h</b></div>
                 <div className="lwc-stat"><span>Rain</span><b>{liveCard.precip?.toFixed(1)} mm</b></div>
               </div>
               {liveCard.time && (
-                <div className="lwc-time">Updated: {new Date(liveCard.time).toLocaleString()}</div>
+                <div className="lwc-time">Updated: {liveCard.time}</div>
               )}
             </div>
           )}

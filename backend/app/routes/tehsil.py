@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Query
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db.mongo import (
     tehsil_monthly_stats_col, tehsil_yearly_stats_col,
@@ -7,7 +9,7 @@ from app.db.mongo import (
 from app.middleware.auth import get_current_user
 from app.middleware.rate_limit import user_rate_limit
 from app.services.data_utils import rows_to_daily
-from app.services.cache import response_cache
+from app.services.cache import cache_get, cache_set
 from app.config import settings
 
 router = APIRouter(
@@ -37,7 +39,7 @@ _DAILY_PROJ = {"_id": 0}
 
 @router.get("/list")
 async def tehsils():
-    cached = response_cache.get("tehsils")
+    cached = await cache_get("tehsils")
     if cached is not None:
         return cached
     pipeline = [
@@ -57,7 +59,7 @@ async def tehsils():
         {"$sort": {"tehsil": 1}},
     ]
     result = await tehsil_monthly_stats_col().aggregate(pipeline).to_list(None)
-    response_cache.set("tehsils", result)
+    await cache_set("tehsils", result)
     return result
 
 
@@ -73,15 +75,20 @@ async def tehsil_summary(
     proj_nr = {"_id": 0, "month": 1, **{f: 1 for f in NORM_FIELDS}}
 
     if tq:
-        yr = await tehsil_yearly_stats_col().find({"tehsil": tq}, proj_yr).sort("year", 1).to_list(None)
-        nr = await tehsil_normals_col().find({"tehsil": tq}, proj_nr).sort("month", 1).to_list(None)
+        yr_raw = await tehsil_yearly_stats_col().find({"tehsil": tq}, proj_yr).sort("year", 1).to_list(None)
+        nr_raw = await tehsil_normals_col().find({"tehsil": tq}, proj_nr).sort("month", 1).to_list(None)
+    elif lat is None or lon is None:
+        raise HTTPException(400, "Provide either 'tehsil' name or lat/lon coordinates")
     else:
         bbox = {
             "latitude":  {"$gte": lat - 0.2, "$lte": lat + 0.2},
             "longitude": {"$gte": lon - 0.2, "$lte": lon + 0.2},
         }
-        yr = await tehsil_yearly_stats_col().find(bbox, proj_yr).sort("year", 1).to_list(None)
-        nr = await tehsil_normals_col().find(bbox, proj_nr).sort("month", 1).to_list(None)
+        yr_raw = await tehsil_yearly_stats_col().find(bbox, proj_yr).sort("year", 1).to_list(None)
+        nr_raw = await tehsil_normals_col().find(bbox, proj_nr).sort("month", 1).to_list(None)
+
+    yr = sorted({r["year"]: r for r in yr_raw}.values(), key=lambda r: r["year"])
+    nr = sorted({r["month"]: r for r in nr_raw}.values(), key=lambda r: r["month"])
 
     info = yr[0] if yr else {}
 
@@ -155,7 +162,7 @@ async def tehsil_stats(
 @router.get("/search")
 async def tehsil_search(q: str = Query(default="")):
     pipeline = [
-        {"$match": {"tehsil": {"$regex": q.strip(), "$options": "i"}}},
+        {"$match": {"tehsil": {"$regex": re.escape(q.strip()), "$options": "i"}}},
         {"$group": {"_id": "$tehsil",
                     "district":  {"$first": "$district"},
                     "province":  {"$first": "$province"},

@@ -5,7 +5,9 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from app.db.mongo import connect_mongo, close_mongo, get_mongo_db
 from app.db.sqlite import init_grid_cache
+from app.services.cache import init_cache, close_cache, is_redis_connected
 from app.routes import weather, tehsil, ai_proxy, auth
+from app.config import settings
 from app.logger import setup_logging, get_logger
 
 setup_logging()
@@ -17,15 +19,18 @@ async def lifespan(app: FastAPI):
     _log.info("PakClim API starting up")
     await connect_mongo()
     await init_grid_cache()
-    _log.info("Startup complete — MongoDB and grid cache ready")
+    await init_cache(settings.redis_uri)
+    _log.info("Startup complete — MongoDB, Redis cache, and grid cache ready")
     yield
     _log.info("PakClim API shutting down")
+    await close_cache()
     await close_mongo()
 
 
 app = FastAPI(
     title="PakClim API",
     version="3.0.0",
+    description="NDMA WeatherLens — 30-year Pakistan Climate Intelligence API",
     lifespan=lifespan,
 )
 
@@ -57,6 +62,7 @@ async def health():
         "status":         "ok",
         "server":         "PakClim FastAPI v3.0",
         "db":             "MongoDB",
+        "cache":          "Redis" if is_redis_connected() else "in-memory",
         "grid_points":    len(_grid_sorted) if _grid_sorted else 0,
         "district_ready": district_ready,
         "tehsil_ready":   tehsil_ready,
