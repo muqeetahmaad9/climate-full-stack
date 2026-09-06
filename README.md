@@ -1,6 +1,16 @@
-# PakClim — NDMA WeatherLens
+<p align="center">
+  <img width="100%" src="assets/banner.svg" alt="PakClim — NDMA WeatherLens" />
+</p>
 
-A full-stack Pakistan Climate Intelligence Portal. Explore 30 years of NASA climate data for any district or settlement on an interactive satellite map, compare years, and get live current weather at settlement level.
+<p align="center">
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=17&duration=2600&pause=900&color=2DE3C0&background=00000000&center=true&vCenter=true&width=620&height=34&lines=30%20years%20of%20NASA%20climate%20data%20for%20any%20district%20in%20Pakistan" alt="30 years of NASA climate data for any district in Pakistan" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/muqeetahmaad9/climate-full-stack/stargazers"><img src="https://img.shields.io/github/stars/muqeetahmaad9/climate-full-stack?style=for-the-badge&color=2DE3C0&labelColor=0d0221" /></a>
+  <a href="https://github.com/muqeetahmaad9/climate-full-stack/commits"><img src="https://img.shields.io/github/last-commit/muqeetahmaad9/climate-full-stack?style=for-the-badge&color=6BD6FF&labelColor=0d0221" /></a>
+  <img src="https://img.shields.io/github/languages/top/muqeetahmaad9/climate-full-stack?style=for-the-badge&color=2DE3C0&labelColor=0d0221" />
+</p>
 
 ---
 
